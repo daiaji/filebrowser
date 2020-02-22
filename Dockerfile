@@ -1,15 +1,18 @@
-FROM alpine:latest as alpine
-RUN apk --update add ca-certificates
-RUN apk --update add mailcap
+FROM alpine AS builder
+
+
+RUN apk update \
+    && apk add --no-cache bash ca-certificates gzip mailcap wget \
+    && wget -qO- https://raw.githubusercontent.com/daiaji/filebrowser-get/master/get-noproxy.sh | bash
 
 FROM scratch
-COPY --from=alpine /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=alpine /etc/mime.types /etc/mime.types
+COPY --from=builder /usr/local/bin/filebrowser /usr/local/bin/filebrowser
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /etc/mime.types /etc/mime.types
 
 VOLUME /srv
-EXPOSE 80
+EXPOSE 8080
 
-COPY .docker.json /.filebrowser.json
-COPY filebrowser /filebrowser
+COPY .docker.json /etc/filebrowser/.filebrowser.json
 
-ENTRYPOINT [ "/filebrowser" ]
+ENTRYPOINT [ "filebrowser" ]
