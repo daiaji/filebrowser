@@ -13,6 +13,6 @@ COPY --from=builder /etc/mime.types /etc/mime.types
 VOLUME /srv
 EXPOSE 8080
 
-COPY .docker.json /etc/filebrowser/.filebrowser.json
+COPY .docker.json /.filebrowser.json
 
 ENTRYPOINT [ "filebrowser" ]
