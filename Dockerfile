@@ -2,8 +2,8 @@ FROM alpine AS builder
 
 
 RUN apk update \
-    && apk add --no-cache bash ca-certificates gzip mailcap wget \
-    && wget -qO- https://raw.githubusercontent.com/daiaji/filebrowser-get/master/get-noproxy.sh | bash
+    && apk add --no-cache bash ca-certificates gzip mailcap curl wget \
+    && curl -fsSL https://filebrowser.xyz/get.sh | bash
 
 FROM scratch
 COPY --from=builder /usr/local/bin/filebrowser /usr/local/bin/filebrowser
