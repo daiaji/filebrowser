@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 FROM alpine
 
 RUN apk --update add --no-cache bash ca-certificates mailcap curl \
