@@ -1,8 +1,8 @@
 package files
 
 import (
-	"crypto/md5"
-	"crypto/sha1"
+	"crypto/md5"  //nolint:gosec
+	"crypto/sha1" //nolint:gosec
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/hex"
@@ -17,9 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/afero"
+
 	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/rules"
-	"github.com/spf13/afero"
 )
 
 // FileInfo describes a file.
@@ -33,19 +34,24 @@ type FileInfo struct {
 	ModTime   time.Time         `json:"modified"`
 	Mode      os.FileMode       `json:"mode"`
 	IsDir     bool              `json:"isDir"`
+	IsSymlink bool              `json:"isSymlink"`
 	Type      string            `json:"type"`
 	Subtitles []string          `json:"subtitles,omitempty"`
 	Content   string            `json:"content,omitempty"`
 	Checksums map[string]string `json:"checksums,omitempty"`
+	Token     string            `json:"token,omitempty"`
 }
 
 // FileOptions are the options when getting a file info.
 type FileOptions struct {
-	Fs      afero.Fs
-	Path    string
-	Modify  bool
-	Expand  bool
-	Checker rules.Checker
+	Fs         afero.Fs
+	Path       string
+	Modify     bool
+	Expand     bool
+	ReadHeader bool
+	Token      string
+	Checker    rules.Checker
+	Content    bool
 }
 
 // NewFileInfo creates a File object from a path and a given user. This File
@@ -56,12 +62,73 @@ func NewFileInfo(opts FileOptions) (*FileInfo, error) {
 		return nil, os.ErrPermission
 	}
 
-	info, err := opts.Fs.Stat(opts.Path)
+	file, err := stat(opts)
 	if err != nil {
 		return nil, err
 	}
 
-	file := &FileInfo{
+	if opts.Expand {
+		if file.IsDir {
+			if err := file.readListing(opts.Checker, opts.ReadHeader); err != nil { //nolint:govet
+				return nil, err
+			}
+			return file, nil
+		}
+
+		err = file.detectType(opts.Modify, opts.Content, true)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return file, err
+}
+
+func stat(opts FileOptions) (*FileInfo, error) {
+	var file *FileInfo
+
+	if lstaterFs, ok := opts.Fs.(afero.Lstater); ok {
+		info, _, err := lstaterFs.LstatIfPossible(opts.Path)
+		if err != nil {
+			return nil, err
+		}
+		file = &FileInfo{
+			Fs:        opts.Fs,
+			Path:      opts.Path,
+			Name:      info.Name(),
+			ModTime:   info.ModTime(),
+			Mode:      info.Mode(),
+			IsDir:     info.IsDir(),
+			IsSymlink: IsSymlink(info.Mode()),
+			Size:      info.Size(),
+			Extension: filepath.Ext(info.Name()),
+			Token:     opts.Token,
+		}
+	}
+
+	// regular file
+	if file != nil && !file.IsSymlink {
+		return file, nil
+	}
+
+	// fs doesn't support afero.Lstater interface or the file is a symlink
+	info, err := opts.Fs.Stat(opts.Path)
+	if err != nil {
+		// can't follow symlink
+		if file != nil && file.IsSymlink {
+			return file, nil
+		}
+		return nil, err
+	}
+
+	// set correct file size in case of symlink
+	if file != nil && file.IsSymlink {
+		file.Size = info.Size()
+		file.IsDir = info.IsDir()
+		return file, nil
+	}
+
+	file = &FileInfo{
 		Fs:        opts.Fs,
 		Path:      opts.Path,
 		Name:      info.Name(),
@@ -70,20 +137,10 @@ func NewFileInfo(opts FileOptions) (*FileInfo, error) {
 		IsDir:     info.IsDir(),
 		Size:      info.Size(),
 		Extension: filepath.Ext(info.Name()),
+		Token:     opts.Token,
 	}
 
-	if opts.Expand {
-		if file.IsDir {
-			return file, file.readListing(opts.Checker)
-		}
-
-		err = file.detectType(opts.Modify, true)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return file, err
+	return file, nil
 }
 
 // Checksum checksums a given File for a given User, using a specific
@@ -105,6 +162,7 @@ func (i *FileInfo) Checksum(algo string) error {
 
 	var h hash.Hash
 
+	//nolint:gosec
 	switch algo {
 	case "md5":
 		h = md5.New()
@@ -127,30 +185,27 @@ func (i *FileInfo) Checksum(algo string) error {
 	return nil
 }
 
-func (i *FileInfo) detectType(modify, saveContent bool) error {
+//nolint:goconst
+//TODO: use constants
+func (i *FileInfo) detectType(modify, saveContent, readHeader bool) error {
+	if IsNamedPipe(i.Mode) {
+		i.Type = "blob"
+		return nil
+	}
 	// failing to detect the type should not return error.
 	// imagine the situation where a file in a dir with thousands
 	// of files couldn't be opened: we'd have immediately
 	// a 500 even though it doesn't matter. So we just log it.
-	reader, err := i.Fs.Open(i.Path)
-	if err != nil {
-		log.Print(err)
-		i.Type = "blob"
-		return nil
-	}
-	defer reader.Close()
-
-	buffer := make([]byte, 512)
-	n, err := reader.Read(buffer)
-	if err != nil && err != io.EOF {
-		log.Print(err)
-		i.Type = "blob"
-		return nil
-	}
 
 	mimetype := mime.TypeByExtension(i.Extension)
-	if mimetype == "" {
-		mimetype = http.DetectContentType(buffer[:n])
+
+	var buffer []byte
+	if readHeader {
+		buffer = i.readFirstBytes()
+
+		if mimetype == "" {
+			mimetype = http.DetectContentType(buffer)
+		}
 	}
 
 	switch {
@@ -164,10 +219,7 @@ func (i *FileInfo) detectType(modify, saveContent bool) error {
 	case strings.HasPrefix(mimetype, "image"):
 		i.Type = "image"
 		return nil
-	case isBinary(buffer[:n], n) || i.Size > 10*1024*1024: // 10 MB
-		i.Type = "blob"
-		return nil
-	default:
+	case (strings.HasPrefix(mimetype, "text") || !isBinary(buffer)) && i.Size <= 10*1024*1024: // 10 MB
 		i.Type = "text"
 
 		if !modify {
@@ -183,9 +235,32 @@ func (i *FileInfo) detectType(modify, saveContent bool) error {
 
 			i.Content = string(content)
 		}
+		return nil
+	default:
+		i.Type = "blob"
 	}
 
 	return nil
+}
+
+func (i *FileInfo) readFirstBytes() []byte {
+	reader, err := i.Fs.Open(i.Path)
+	if err != nil {
+		log.Print(err)
+		i.Type = "blob"
+		return nil
+	}
+	defer reader.Close()
+
+	buffer := make([]byte, 512) //nolint:gomnd
+	n, err := reader.Read(buffer)
+	if err != nil && err != io.EOF {
+		log.Print(err)
+		i.Type = "blob"
+		return nil
+	}
+
+	return buffer[:n]
 }
 
 func (i *FileInfo) detectSubtitles() {
@@ -198,13 +273,13 @@ func (i *FileInfo) detectSubtitles() {
 
 	// TODO: detect multiple languages. Base.Lang.vtt
 
-	path := strings.TrimSuffix(i.Path, ext) + ".vtt"
-	if _, err := i.Fs.Stat(path); err == nil {
-		i.Subtitles = append(i.Subtitles, path)
+	fPath := strings.TrimSuffix(i.Path, ext) + ".vtt"
+	if _, err := i.Fs.Stat(fPath); err == nil {
+		i.Subtitles = append(i.Subtitles, fPath)
 	}
 }
 
-func (i *FileInfo) readListing(checker rules.Checker) error {
+func (i *FileInfo) readListing(checker rules.Checker, readHeader bool) error {
 	afs := &afero.Afero{Fs: i.Fs}
 	dir, err := afs.ReadDir(i.Path)
 	if err != nil {
@@ -219,16 +294,18 @@ func (i *FileInfo) readListing(checker rules.Checker) error {
 
 	for _, f := range dir {
 		name := f.Name()
-		path := path.Join(i.Path, name)
+		fPath := path.Join(i.Path, name)
 
-		if !checker.Check(path) {
+		if !checker.Check(fPath) {
 			continue
 		}
 
-		if strings.HasPrefix(f.Mode().String(), "L") {
+		isSymlink := false
+		if IsSymlink(f.Mode()) {
+			isSymlink = true
 			// It's a symbolic link. We try to follow it. If it doesn't work,
-			// we stay with the link information instead if the target's.
-			info, err := i.Fs.Stat(path)
+			// we stay with the link information instead of the target's.
+			info, err := i.Fs.Stat(fPath)
 			if err == nil {
 				f = info
 			}
@@ -241,8 +318,9 @@ func (i *FileInfo) readListing(checker rules.Checker) error {
 			ModTime:   f.ModTime(),
 			Mode:      f.Mode(),
 			IsDir:     f.IsDir(),
+			IsSymlink: isSymlink,
 			Extension: filepath.Ext(name),
-			Path:      path,
+			Path:      fPath,
 		}
 
 		if file.IsDir {
@@ -250,7 +328,7 @@ func (i *FileInfo) readListing(checker rules.Checker) error {
 		} else {
 			listing.NumFiles++
 
-			err := file.detectType(true, false)
+			err := file.detectType(true, false, readHeader)
 			if err != nil {
 				return err
 			}

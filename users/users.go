@@ -4,11 +4,11 @@ import (
 	"path/filepath"
 	"regexp"
 
-	"github.com/filebrowser/filebrowser/v2/errors"
+	"github.com/spf13/afero"
 
+	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/files"
 	"github.com/filebrowser/filebrowser/v2/rules"
-	"github.com/spf13/afero"
 )
 
 // ViewMode describes a view mode.
@@ -28,11 +28,14 @@ type User struct {
 	Locale       string        `json:"locale"`
 	LockPassword bool          `json:"lockPassword"`
 	ViewMode     ViewMode      `json:"viewMode"`
+	SingleClick  bool          `json:"singleClick"`
 	Perm         Permissions   `json:"perm"`
 	Commands     []string      `json:"commands"`
 	Sorting      files.Sorting `json:"sorting"`
 	Fs           afero.Fs      `json:"-" yaml:"-"`
 	Rules        []rules.Rule  `json:"rules"`
+	HideDotfiles bool          `json:"hideDotfiles"`
+	DateFormat   bool          `json:"dateFormat"`
 }
 
 // GetRules implements rules.Provider.
@@ -52,6 +55,7 @@ var checkableFields = []string{
 
 // Clean cleans up a user and verifies if all its fields
 // are alright to be saved.
+//nolint:gocyclo
 func (u *User) Clean(baseScope string, fields ...string) error {
 	if len(fields) == 0 {
 		fields = checkableFields

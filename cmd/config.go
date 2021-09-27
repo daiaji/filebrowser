@@ -8,11 +8,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/filebrowser/filebrowser/v2/auth"
 	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/settings"
-	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 func init() {
@@ -40,10 +41,12 @@ func addConfigFlags(flags *pflag.FlagSet) {
 	flags.String("recaptcha.secret", "", "ReCaptcha secret")
 
 	flags.String("branding.name", "", "replace 'File Browser' by this name")
+	flags.String("branding.color", "", "set the theme color")
 	flags.String("branding.files", "", "path to directory with images and custom styles")
 	flags.Bool("branding.disableExternal", false, "disable external links such as GitHub links")
 }
 
+//nolint:gocyclo
 func getAuthentication(flags *pflag.FlagSet, defaults ...interface{}) (settings.AuthMethod, auth.Auther) {
 	method := settings.AuthMethod(mustGetString(flags, "auth.method"))
 
@@ -53,11 +56,12 @@ func getAuthentication(flags *pflag.FlagSet, defaults ...interface{}) (settings.
 			for _, arg := range defaults {
 				switch def := arg.(type) {
 				case *settings.Settings:
-					method = settings.AuthMethod(def.AuthMethod)
+					method = def.AuthMethod
 				case auth.Auther:
 					ms, err := json.Marshal(def)
 					checkErr(err)
-					json.Unmarshal(ms, &defaultAuther)
+					err = json.Unmarshal(ms, &defaultAuther)
+					checkErr(err)
 				}
 			}
 		}
@@ -118,7 +122,7 @@ func getAuthentication(flags *pflag.FlagSet, defaults ...interface{}) (settings.
 }
 
 func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Auther) {
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0) //nolint:gomnd
 
 	fmt.Fprintf(w, "Sign up:\t%t\n", set.Signup)
 	fmt.Fprintf(w, "Create User Dir:\t%t\n", set.CreateUserDir)
@@ -128,6 +132,7 @@ func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Aut
 	fmt.Fprintf(w, "\tName:\t%s\n", set.Branding.Name)
 	fmt.Fprintf(w, "\tFiles override:\t%s\n", set.Branding.Files)
 	fmt.Fprintf(w, "\tDisable external links:\t%t\n", set.Branding.DisableExternal)
+	fmt.Fprintf(w, "\tColor:\t%s\n", set.Branding.Color)
 	fmt.Fprintln(w, "\nServer:")
 	fmt.Fprintf(w, "\tLog:\t%s\n", ser.Log)
 	fmt.Fprintf(w, "\tPort:\t%s\n", ser.Port)
@@ -137,10 +142,12 @@ func printSettings(ser *settings.Server, set *settings.Settings, auther auth.Aut
 	fmt.Fprintf(w, "\tAddress:\t%s\n", ser.Address)
 	fmt.Fprintf(w, "\tTLS Cert:\t%s\n", ser.TLSCert)
 	fmt.Fprintf(w, "\tTLS Key:\t%s\n", ser.TLSKey)
+	fmt.Fprintf(w, "\tExec Enabled:\t%t\n", ser.EnableExec)
 	fmt.Fprintln(w, "\nDefaults:")
 	fmt.Fprintf(w, "\tScope:\t%s\n", set.Defaults.Scope)
 	fmt.Fprintf(w, "\tLocale:\t%s\n", set.Defaults.Locale)
 	fmt.Fprintf(w, "\tView mode:\t%s\n", set.Defaults.ViewMode)
+	fmt.Fprintf(w, "\tSingle Click:\t%t\n", set.Defaults.SingleClick)
 	fmt.Fprintf(w, "\tCommands:\t%s\n", strings.Join(set.Defaults.Commands, " "))
 	fmt.Fprintf(w, "\tSorting:\n")
 	fmt.Fprintf(w, "\t\tBy:\t%s\n", set.Defaults.Sorting.By)

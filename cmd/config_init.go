@@ -2,10 +2,10 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
+
+	"github.com/spf13/cobra"
 
 	"github.com/filebrowser/filebrowser/v2/settings"
-	"github.com/spf13/cobra"
 )
 
 func init() {
@@ -31,7 +31,7 @@ override the options.`,
 		s := &settings.Settings{
 			Key:        generateKey(),
 			Signup:     mustGetBool(flags, "signup"),
-			Shell:      strings.Split(strings.TrimSpace(mustGetString(flags, "shell")), " "),
+			Shell:      convertCmdStrToCmdArray(mustGetString(flags, "shell")),
 			AuthMethod: authMethod,
 			Defaults:   defaults,
 			Branding: settings.Branding{
@@ -61,7 +61,7 @@ override the options.`,
 
 		fmt.Printf(`
 Congratulations! You've set up your database to use with File Browser.
-Now add your first user via 'filebrowser users new' and then you just
+Now add your first user via 'filebrowser users add' and then you just
 need to call the main command to boot up the server.
 `)
 		printSettings(ser, s, auther)

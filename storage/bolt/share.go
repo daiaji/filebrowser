@@ -3,12 +3,33 @@ package bolt
 import (
 	"github.com/asdine/storm"
 	"github.com/asdine/storm/q"
+
 	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/share"
 )
 
 type shareBackend struct {
 	db *storm.DB
+}
+
+func (s shareBackend) All() ([]*share.Link, error) {
+	var v []*share.Link
+	err := s.db.All(&v)
+	if err == storm.ErrNotFound {
+		return v, errors.ErrNotExist
+	}
+
+	return v, err
+}
+
+func (s shareBackend) FindByUserID(id uint) ([]*share.Link, error) {
+	var v []*share.Link
+	err := s.db.Select(q.Eq("UserID", id)).Find(&v)
+	if err == storm.ErrNotFound {
+		return v, errors.ErrNotExist
+	}
+
+	return v, err
 }
 
 func (s shareBackend) GetByHash(hash string) (*share.Link, error) {
@@ -46,5 +67,9 @@ func (s shareBackend) Save(l *share.Link) error {
 }
 
 func (s shareBackend) Delete(hash string) error {
-	return s.db.DeleteStruct(&share.Link{Hash: hash})
+	err := s.db.DeleteStruct(&share.Link{Hash: hash})
+	if err == storm.ErrNotFound {
+		return nil
+	}
+	return err
 }

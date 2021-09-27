@@ -8,9 +8,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gorilla/mux"
+
 	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/users"
-	"github.com/gorilla/mux"
+)
+
+var (
+	NonModifiableFieldsForNonAdmin = []string{"Username", "Scope", "LockPassword", "Perm", "Commands", "Rules"}
 )
 
 type modifyUserRequest struct {
@@ -20,14 +25,14 @@ type modifyUserRequest struct {
 
 func getUserID(r *http.Request) (uint, error) {
 	vars := mux.Vars(r)
-	i, err := strconv.ParseUint(vars["id"], 10, 0)
+	i, err := strconv.ParseUint(vars["id"], 10, 0) //nolint:gomnd
 	if err != nil {
 		return 0, err
 	}
 	return uint(i), err
 }
 
-func getUser(w http.ResponseWriter, r *http.Request) (*modifyUserRequest, error) {
+func getUser(_ http.ResponseWriter, r *http.Request) (*modifyUserRequest, error) {
 	if r.Body == nil {
 		return nil, errors.ErrEmptyRequest
 	}
@@ -94,8 +99,8 @@ var userGetHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 
 var userDeleteHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request, d *data) (int, error) {
 	err := d.store.Users.Delete(d.raw.(uint))
-	if err == errors.ErrNotExist {
-		return http.StatusNotFound, err
+	if err != nil {
+		return errToStatus(err), err
 	}
 
 	return http.StatusOK, nil
@@ -133,7 +138,7 @@ var userPostHandler = withAdmin(func(w http.ResponseWriter, r *http.Request, d *
 		return http.StatusInternalServerError, err
 	}
 
-	w.Header().Set("Location", "/settings/users/"+strconv.FormatUint(uint64(req.Data.ID), 10))
+	w.Header().Set("Location", "/settings/users/"+strconv.FormatUint(uint64(req.Data.ID), 10)) //nolint:gomnd
 	return http.StatusCreated, nil
 })
 
@@ -147,9 +152,9 @@ var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 		return http.StatusBadRequest, nil
 	}
 
-	if len(req.Which) == 1 && req.Which[0] == "all" {
+	if len(req.Which) == 0 || (len(req.Which) == 1 && req.Which[0] == "all") {
 		if !d.user.Perm.Admin {
-			return http.StatusForbidden, err
+			return http.StatusForbidden, nil
 		}
 
 		if req.Data.Password != "" {
@@ -168,7 +173,10 @@ var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 	}
 
 	for k, v := range req.Which {
-		if v == "password" {
+		v = strings.Title(v)
+		req.Which[k] = v
+
+		if v == "Password" {
 			if !d.user.Perm.Admin && d.user.LockPassword {
 				return http.StatusForbidden, nil
 			}
@@ -179,11 +187,11 @@ var userPutHandler = withSelfOrAdmin(func(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		if !d.user.Perm.Admin && (v == "scope" || v == "perm" || v == "username") {
-			return http.StatusForbidden, nil
+		for _, f := range NonModifiableFieldsForNonAdmin {
+			if !d.user.Perm.Admin && v == f {
+				return http.StatusForbidden, nil
+			}
 		}
-
-		req.Which[k] = strings.Title(v)
 	}
 
 	err = d.store.Users.Update(req.Data, req.Which...)

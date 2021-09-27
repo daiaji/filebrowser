@@ -25,6 +25,7 @@
   transition: .1s ease background, .1s ease opacity;
   align-items: center;
   cursor: pointer;
+  user-select: none;
 }
 
 #listing .item div:last-of-type {
@@ -48,6 +49,14 @@
 
 #listing .item i {
   font-size: 4em;
+  margin-right: 0.1em;
+  vertical-align: bottom;
+}
+
+#listing .item img {
+  width: 4em;
+  height: 4em;
+  object-fit: cover;
   margin-right: 0.1em;
   vertical-align: bottom;
 }
@@ -127,6 +136,11 @@
 
 #listing.list .item div:first-of-type i {
   font-size: 2em;
+}
+
+#listing.list .item div:first-of-type img {
+  width: 2em;
+  height: 2em;
 }
 
 #listing.list .item div:last-of-type {

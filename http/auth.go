@@ -10,17 +10,25 @@ import (
 
 	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/dgrijalva/jwt-go/request"
+
 	"github.com/filebrowser/filebrowser/v2/errors"
 	"github.com/filebrowser/filebrowser/v2/users"
+)
+
+const (
+	TokenExpirationTime = time.Hour * 2
 )
 
 type userInfo struct {
 	ID           uint              `json:"id"`
 	Locale       string            `json:"locale"`
 	ViewMode     users.ViewMode    `json:"viewMode"`
+	SingleClick  bool              `json:"singleClick"`
 	Perm         users.Permissions `json:"perm"`
 	Commands     []string          `json:"commands"`
 	LockPassword bool              `json:"lockPassword"`
+	HideDotfiles bool              `json:"hideDotfiles"`
+	DateFormat   bool              `json:"dateFormat"`
 }
 
 type authToken struct {
@@ -41,11 +49,16 @@ func (e extractor) ExtractToken(r *http.Request) (string, error) {
 	}
 
 	auth := r.URL.Query().Get("auth")
-	if auth == "" {
-		return "", request.ErrNoTokenInRequest
+	if auth != "" && strings.Count(auth, ".") == 2 {
+		return auth, nil
 	}
 
-	return auth, nil
+	cookie, _ := r.Cookie("auth")
+	if cookie != nil && strings.Count(cookie.Value, ".") == 2 {
+		return cookie.Value, nil
+	}
+
+	return "", request.ErrNoTokenInRequest
 }
 
 func withUser(fn handleFunc) handleFunc {
@@ -161,19 +174,22 @@ var renewHandler = withUser(func(w http.ResponseWriter, r *http.Request, d *data
 	return printToken(w, r, d, d.user)
 })
 
-func printToken(w http.ResponseWriter, r *http.Request, d *data, user *users.User) (int, error) {
+func printToken(w http.ResponseWriter, _ *http.Request, d *data, user *users.User) (int, error) {
 	claims := &authToken{
 		User: userInfo{
 			ID:           user.ID,
 			Locale:       user.Locale,
 			ViewMode:     user.ViewMode,
+			SingleClick:  user.SingleClick,
 			Perm:         user.Perm,
 			LockPassword: user.LockPassword,
 			Commands:     user.Commands,
+			HideDotfiles: user.HideDotfiles,
+			DateFormat:   user.DateFormat,
 		},
 		StandardClaims: jwt.StandardClaims{
 			IssuedAt:  time.Now().Unix(),
-			ExpiresAt: time.Now().Add(time.Hour * 2).Unix(),
+			ExpiresAt: time.Now().Add(TokenExpirationTime).Unix(),
 			Issuer:    "File Browser",
 		},
 	}
@@ -184,7 +200,9 @@ func printToken(w http.ResponseWriter, r *http.Request, d *data, user *users.Use
 		return http.StatusInternalServerError, err
 	}
 
-	w.Header().Set("Content-Type", "cty")
-	w.Write([]byte(signed))
+	w.Header().Set("Content-Type", "text/plain")
+	if _, err := w.Write([]byte(signed)); err != nil {
+		return http.StatusInternalServerError, err
+	}
 	return 0, nil
 }

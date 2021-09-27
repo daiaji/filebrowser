@@ -3,6 +3,7 @@ package cmd
 import (
 	"crypto/tls"
 	"errors"
+	"io/fs"
 	"io/ioutil"
 	"log"
 	"net"
@@ -13,16 +14,21 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/filebrowser/filebrowser/v2/auth"
-	fbhttp "github.com/filebrowser/filebrowser/v2/http"
-	"github.com/filebrowser/filebrowser/v2/settings"
-	"github.com/filebrowser/filebrowser/v2/storage"
-	"github.com/filebrowser/filebrowser/v2/users"
 	homedir "github.com/mitchellh/go-homedir"
+	"github.com/spf13/afero"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	v "github.com/spf13/viper"
 	lumberjack "gopkg.in/natefinch/lumberjack.v2"
+
+	"github.com/filebrowser/filebrowser/v2/auth"
+	"github.com/filebrowser/filebrowser/v2/diskcache"
+	"github.com/filebrowser/filebrowser/v2/frontend"
+	fbhttp "github.com/filebrowser/filebrowser/v2/http"
+	"github.com/filebrowser/filebrowser/v2/img"
+	"github.com/filebrowser/filebrowser/v2/settings"
+	"github.com/filebrowser/filebrowser/v2/storage"
+	"github.com/filebrowser/filebrowser/v2/users"
 )
 
 var (
@@ -31,6 +37,7 @@ var (
 
 func init() {
 	cobra.OnInitialize(initConfig)
+	cobra.MousetrapHelpText = ""
 
 	rootCmd.SetVersionTemplate("File Browser version {{printf \"%s\" .Version}}\n")
 
@@ -54,7 +61,14 @@ func addServerFlags(flags *pflag.FlagSet) {
 	flags.StringP("key", "k", "", "tls key")
 	flags.StringP("root", "r", ".", "root to prepend to relative paths")
 	flags.String("socket", "", "socket to listen to (cannot be used with address, port, cert nor key flags)")
+	flags.Uint32("socket-perm", 0666, "unix socket file permissions") //nolint:gomnd
 	flags.StringP("baseurl", "b", "", "base url")
+	flags.String("cache-dir", "", "file cache directory (disabled if empty)")
+	flags.Int("img-processors", 4, "image processors count") //nolint:gomnd
+	flags.Bool("disable-thumbnails", false, "disable image thumbnails")
+	flags.Bool("disable-preview-resize", false, "disable resize of image previews")
+	flags.Bool("disable-exec", false, "disables Command Runner feature")
+	flags.Bool("disable-type-detection-by-header", false, "disables type detection by reading file headers")
 }
 
 var rootCmd = &cobra.Command{
@@ -102,6 +116,24 @@ user created with the credentials from options "username" and "password".`,
 			quickSetup(cmd.Flags(), d)
 		}
 
+		// build img service
+		workersCount, err := cmd.Flags().GetInt("img-processors")
+		checkErr(err)
+		if workersCount < 1 {
+			log.Fatal("Image resize workers count could not be < 1")
+		}
+		imgSvc := img.New(workersCount)
+
+		var fileCache diskcache.Interface = diskcache.NewNoOp()
+		cacheDir, err := cmd.Flags().GetString("cache-dir")
+		checkErr(err)
+		if cacheDir != "" {
+			if err := os.MkdirAll(cacheDir, 0700); err != nil { //nolint:govet,gomnd
+				log.Fatalf("can't make directory %s: %s", cacheDir, err)
+			}
+			fileCache = diskcache.New(afero.NewOsFs(), cacheDir)
+		}
+
 		server := getRunParams(cmd.Flags(), d.store)
 		setupLog(server.Log)
 
@@ -113,15 +145,23 @@ user created with the credentials from options "username" and "password".`,
 
 		var listener net.Listener
 
-		if server.Socket != "" {
+		switch {
+		case server.Socket != "":
 			listener, err = net.Listen("unix", server.Socket)
 			checkErr(err)
-		} else if server.TLSKey != "" && server.TLSCert != "" {
-			cer, err := tls.LoadX509KeyPair(server.TLSCert, server.TLSKey)
+			socketPerm, err := cmd.Flags().GetUint32("socket-perm") //nolint:govet
 			checkErr(err)
-			listener, err = tls.Listen("tcp", adr, &tls.Config{Certificates: []tls.Certificate{cer}})
+			err = os.Chmod(server.Socket, os.FileMode(socketPerm))
 			checkErr(err)
-		} else {
+		case server.TLSKey != "" && server.TLSCert != "":
+			cer, err := tls.LoadX509KeyPair(server.TLSCert, server.TLSKey) //nolint:govet
+			checkErr(err)
+			listener, err = tls.Listen("tcp", adr, &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{cer}},
+			)
+			checkErr(err)
+		default:
 			listener, err = net.Listen("tcp", adr)
 			checkErr(err)
 		}
@@ -130,7 +170,12 @@ user created with the credentials from options "username" and "password".`,
 		signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
 		go cleanupHandler(listener, sigc)
 
-		handler, err := fbhttp.NewHandler(d.store, server)
+		assetsFs, err := fs.Sub(frontend.Assets(), "dist")
+		if err != nil {
+			panic(err)
+		}
+
+		handler, err := fbhttp.NewHandler(imgSvc, fileCache, d.store, server, assetsFs)
 		checkErr(err)
 
 		defer listener.Close()
@@ -142,13 +187,14 @@ user created with the credentials from options "username" and "password".`,
 	}, pythonConfig{allowNoDB: true}),
 }
 
-func cleanupHandler(listener net.Listener, c chan os.Signal) {
+func cleanupHandler(listener net.Listener, c chan os.Signal) { //nolint:interfacer
 	sig := <-c
 	log.Printf("Caught signal %s: shutting down.", sig)
 	listener.Close()
 	os.Exit(0)
 }
 
+//nolint:gocyclo
 func getRunParams(flags *pflag.FlagSet, st *storage.Storage) *settings.Server {
 	server, err := st.Settings.GetServer()
 	checkErr(err)
@@ -201,6 +247,18 @@ func getRunParams(flags *pflag.FlagSet, st *storage.Storage) *settings.Server {
 	if isAddrSet && server.Socket != "" {
 		server.Socket = ""
 	}
+
+	_, disableThumbnails := getParamB(flags, "disable-thumbnails")
+	server.EnableThumbnails = !disableThumbnails
+
+	_, disablePreviewResize := getParamB(flags, "disable-preview-resize")
+	server.ResizePreview = !disablePreviewResize
+
+	_, disableTypeDetectionByHeader := getParamB(flags, "disable-type-detection-by-header")
+	server.TypeDetectionByHeader = !disableTypeDetectionByHeader
+
+	_, disableExec := getParamB(flags, "disable-exec")
+	server.EnableExec = !disableExec
 
 	return server
 }
@@ -258,8 +316,9 @@ func quickSetup(flags *pflag.FlagSet, d pythonData) {
 		Signup:        false,
 		CreateUserDir: false,
 		Defaults: settings.UserDefaults{
-			Scope:  ".",
-			Locale: "en",
+			Scope:       ".",
+			Locale:      "en",
+			SingleClick: false,
 			Perm: users.Permissions{
 				Admin:    false,
 				Execute:  true,
@@ -348,5 +407,4 @@ func initConfig() {
 	} else {
 		cfgFile = "Using config file: " + v.ConfigFileUsed()
 	}
-
 }

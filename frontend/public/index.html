@@ -11,27 +11,28 @@
 
   <title>[{[ if .Name -]}][{[ .Name ]}][{[ else ]}]File Browser[{[ end ]}]</title>
 
-  <link rel="icon" type="image/png" sizes="32x32" href="/[{[ .StaticURL ]}]/img/icons/favicon-32x32.png">
-  <link rel="icon" type="image/png" sizes="16x16" href="/[{[ .StaticURL ]}]/img/icons/favicon-16x16.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="[{[ .StaticURL ]}]/img/icons/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="[{[ .StaticURL ]}]/img/icons/favicon-16x16.png">
+
   <!-- Add to home screen for Android and modern mobile browsers -->
   <link rel="manifest" id="manifestPlaceholder" crossorigin="use-credentials">
-  <meta name="theme-color" content="#2979ff">
+  <meta name="theme-color" content="[{[ if .Color -]}][{[ .Color ]}][{[ else ]}]#2979ff[{[ end ]}]">
 
-  <!-- Add to home screen for Safari on iOS -->
+  <!-- Add to home screen for Safari on iOS/iPadOS -->
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <meta name="apple-mobile-web-app-title" content="assets">
-  <link rel="apple-touch-icon" href="/[{[ .StaticURL ]}]/img/icons/apple-touch-icon-152x152.png">
+  <link rel="apple-touch-icon" href="[{[ .StaticURL ]}]/img/icons/apple-touch-icon.png">
 
   <!-- Add to home screen for Windows -->
-  <meta name="msapplication-TileImage" content="/[{[ .StaticURL ]}]/img/icons/msapplication-icon-144x144.png">
-  <meta name="msapplication-TileColor" content="#2979ff">
+  <meta name="msapplication-TileImage" content="[{[ .StaticURL ]}]/img/icons/mstile-144x144.png">
+  <meta name="msapplication-TileColor" content="[{[ if .Color -]}][{[ .Color ]}][{[ else ]}]#2979ff[{[ end ]}]">
 
   <!-- Inject Some Variables and generate the manifest json -->
   <script>
-    window.FileBrowser = JSON.parse(`[{[ .Json ]}]`);
-    
-    var fullStaticURL = window.location.origin + "/" + window.FileBrowser.StaticURL; 
+    window.FileBrowser = JSON.parse('[{[ .Json ]}]');
+
+    var fullStaticURL = window.location.origin + window.FileBrowser.StaticURL;
     var dynamicManifest = {
       "name": window.FileBrowser.Name || 'File Browser',
       "short_name": window.FileBrowser.Name || 'File Browser',
@@ -50,7 +51,7 @@
       "start_url": window.location.origin + window.FileBrowser.BaseURL,
       "display": "standalone",
       "background_color": "#ffffff",
-      "theme_color": "#455a64"
+      "theme_color": window.FileBrowser.Color || "#455a64"
     }
 
     const stringManifest = JSON.stringify(dynamicManifest);
@@ -76,7 +77,7 @@
     opacity: 0;
   }
 
-  .spinner {
+  #loading .spinner {
     width: 70px;
     text-align: center;
     position: fixed;
@@ -86,7 +87,7 @@
             transform: translate(-50%, -50%);
   }
 
-  .spinner > div {
+  #loading .spinner > div {
     width: 18px;
     height: 18px;
     background-color: #333;
@@ -96,12 +97,12 @@
     animation: sk-bouncedelay 1.4s infinite ease-in-out both;
   }
 
-  .spinner .bounce1 {
+  #loading .spinner .bounce1 {
     -webkit-animation-delay: -0.32s;
     animation-delay: -0.32s;
   }
 
-  .spinner .bounce2 {
+  #loading .spinner .bounce2 {
     -webkit-animation-delay: -0.16s;
     animation-delay: -0.16s;
   }
@@ -134,10 +135,10 @@
   </div>
 
   [{[ if .Theme -]}]
-    <link rel="stylesheet" href="/[{[ .StaticURL ]}]/themes/[{[ .Theme ]}].css" />
+    <link rel="stylesheet" href="[{[ .StaticURL ]}]/themes/[{[ .Theme ]}].css" />
   [{[ end ]}]
   [{[ if .CSS -]}]
-    <link rel="stylesheet" href="/[{[ .StaticURL ]}]/custom.css" />
+    <link rel="stylesheet" href="[{[ .StaticURL ]}]/custom.css" />
   [{[ end ]}]
 </body>
 </html>

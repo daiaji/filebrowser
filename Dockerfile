@@ -1,12 +1,14 @@
+<<<<<<< HEAD
 FROM alpine
 
-RUN apk update \
-    && apk add --no-cache bash ca-certificates gzip mailcap curl wget \
-    && curl -fsSL https://filebrowser.org/get.sh | bash
+RUN apk --update add --no-cache bash ca-certificates mailcap curl \
+    && curl -fsSL https://raw.githubusercontent.com/filebrowser/get/master/get.sh | bash
 
-VOLUME /srv
+HEALTHCHECK --start-period=2s --interval=5s --timeout=3s \
+  CMD curl -f http://localhost/health || exit 1
+
 EXPOSE 8080
 
-COPY .docker.json /.filebrowser.json
+COPY .docker.json /etc/filebrowser/filebrowser.json
 
 ENTRYPOINT [ "filebrowser" ]

@@ -13,6 +13,7 @@ import (
 
 // Runner is a commands runner.
 type Runner struct {
+	Enabled bool
 	*settings.Settings
 }
 
@@ -21,11 +22,13 @@ func (r *Runner) RunHook(fn func() error, evt, path, dst string, user *users.Use
 	path = user.FullPath(path)
 	dst = user.FullPath(dst)
 
-	if val, ok := r.Commands["before_"+evt]; ok {
-		for _, command := range val {
-			err := r.exec(command, "before_"+evt, path, dst, user)
-			if err != nil {
-				return err
+	if r.Enabled {
+		if val, ok := r.Commands["before_"+evt]; ok {
+			for _, command := range val {
+				err := r.exec(command, "before_"+evt, path, dst, user)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -35,11 +38,13 @@ func (r *Runner) RunHook(fn func() error, evt, path, dst string, user *users.Use
 		return err
 	}
 
-	if val, ok := r.Commands["after_"+evt]; ok {
-		for _, command := range val {
-			err := r.exec(command, "after_"+evt, path, dst, user)
-			if err != nil {
-				return err
+	if r.Enabled {
+		if val, ok := r.Commands["after_"+evt]; ok {
+			for _, command := range val {
+				err := r.exec(command, "after_"+evt, path, dst, user)
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -60,9 +65,33 @@ func (r *Runner) exec(raw, evt, path, dst string, user *users.User) error {
 		return err
 	}
 
-	cmd := exec.Command(command[0], command[1:]...)
+	envMapping := func(key string) string {
+		switch key {
+		case "FILE":
+			return path
+		case "SCOPE":
+			return user.Scope
+		case "TRIGGER":
+			return evt
+		case "USERNAME":
+			return user.Username
+		case "DESTINATION":
+			return dst
+		default:
+			return os.Getenv(key)
+		}
+	}
+	for i, arg := range command {
+		if i == 0 {
+			continue
+		}
+
+		command[i] = os.Expand(arg, envMapping)
+	}
+
+	cmd := exec.Command(command[0], command[1:]...) //nolint:gosec
 	cmd.Env = append(os.Environ(), fmt.Sprintf("FILE=%s", path))
-	cmd.Env = append(cmd.Env, fmt.Sprintf("SCOPE=%s", user.Scope))
+	cmd.Env = append(cmd.Env, fmt.Sprintf("SCOPE=%s", user.Scope)) //nolint:gocritic
 	cmd.Env = append(cmd.Env, fmt.Sprintf("TRIGGER=%s", evt))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("USERNAME=%s", user.Username))
 	cmd.Env = append(cmd.Env, fmt.Sprintf("DESTINATION=%s", dst))
@@ -73,6 +102,14 @@ func (r *Runner) exec(raw, evt, path, dst string, user *users.User) error {
 
 	if !blocking {
 		log.Printf("[INFO] Nonblocking Command: \"%s\"", strings.Join(command, " "))
+		defer func() {
+			go func() {
+				err := cmd.Wait()
+				if err != nil {
+					log.Printf("[INFO] Nonblocking Command \"%s\" failed: %s", strings.Join(command, " "), err)
+				}
+			}()
+		}()
 		return cmd.Start()
 	}
 
